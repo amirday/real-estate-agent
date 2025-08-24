@@ -136,19 +136,19 @@ class AppConfig(BaseModel):
 class PropertySummary(BaseModel):
     zpid: str
     address: Optional[str] = None
-    city: Optional[str] = None
+    city: Optional[str] = None  
     state: Optional[str] = None
     zipcode: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     price: Optional[float] = None
-    beds: Optional[int] = None
-    baths: Optional[float] = None
-    sqft: Optional[float] = None
-    lotSize: Optional[float] = None
+    bedrooms: Optional[int] = None  # Zillow uses 'bedrooms', not 'beds'
+    bathrooms: Optional[float] = None  # Zillow uses 'bathrooms', not 'baths'
+    livingArea: Optional[float] = None  # Zillow uses 'livingArea', not 'sqft'
+    lotAreaValue: Optional[float] = None  # Zillow uses 'lotAreaValue', not 'lotSize'
     yearBuilt: Optional[int] = None
-    homeType: Optional[str] = None
-    homeStatus: Optional[str] = None
+    propertyType: Optional[str] = None  # Zillow uses 'propertyType', not 'homeType'
+    listingStatus: Optional[str] = None  # Zillow uses 'listingStatus', not 'homeStatus'
     daysOnZillow: Optional[int] = None
     detailUrl: Optional[str] = None
 
@@ -197,8 +197,7 @@ class CompRecord(BaseModel):
 
 
 class PropertySearchResult(BaseModel):
-    results: List[PropertySummary] = []
-    totalResultCount: Optional[int] = None
+    props: List[PropertySummary] = []
     
     model_config = {
         "extra": "allow",

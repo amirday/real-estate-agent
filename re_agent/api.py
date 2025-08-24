@@ -82,15 +82,19 @@ class ZillowClient:
         # Zillow RapidAPI common search endpoint
         payload = self._get("/propertyExtendedSearch", params_dict)
         
+        # Extract props array from Zillow response and create our structured result
+        props_data = payload.get("props") or []
+        structured_result = {"props": props_data}
+        
         # Store in cache only if enabled
         if cfg.cache_config.api_cache_enabled:
-            self._store_cache(endpoint, params_dict, payload)
+            self._store_cache(endpoint, params_dict, structured_result)
         
         cache_status = "cache enabled" if cfg.cache_config.api_cache_enabled else "cache disabled"
         self._log(f"Used endpoint: {endpoint} geo={geo} page={page} ({cache_status}) params={structured_params.model_dump_json(exclude_none=True)}")
         
         try:
-            return PropertySearchResult.model_validate(payload)
+            return PropertySearchResult.model_validate(structured_result)
         except Exception as e:
             raise DataValidationError(f"Failed to validate search result from API: {e}")
 
@@ -213,7 +217,7 @@ class ZillowClient:
 
         payload = self._get("/propertyExtendedSearch", params)
         # normalize shape to {comps: [...]} if necessary
-        comps = payload.get("results") or payload.get("props") or []
+        comps = payload.get("props") or []
         
         # If insufficient comps and allowed to extend window per agents.md
         if cfg and cfg.arv_config and len(comps) < cfg.arv_config.min_comps:
@@ -223,7 +227,7 @@ class ZillowClient:
                 params_ext["soldInLast"] = ext_months
                 try:
                     payload_ext = self._get("/propertyExtendedSearch", params_ext)
-                    comps_ext = payload_ext.get("results") or payload_ext.get("props") or []
+                    comps_ext = payload_ext.get("props") or []
                     if len(comps_ext) > len(comps):
                         comps = comps_ext
                         params = params_ext

@@ -35,17 +35,17 @@ def _create_csv_row_from_property_data(zpid: str, details, search_result,
         latitude=_pick_first_valid(details.latitude, search_result.latitude),
         longitude=_pick_first_valid(details.longitude, search_result.longitude),
         url=_pick_first_valid(details.url, search_result.detailUrl),
-        status=_pick_first_valid(details.homeStatus, search_result.homeStatus),
+        status=_pick_first_valid(details.homeStatus, search_result.listingStatus),
         dom=_pick_first_valid(details.daysOnZillow, search_result.daysOnZillow),
         hoa=_pick_first_valid(details.hoaFee, None),  # search result doesn't have HOA
         # Specs
         list_price=_pick_first_valid(details.price, search_result.price),
-        beds=_pick_first_valid(details.bedrooms, search_result.beds),
-        baths=_pick_first_valid(details.bathrooms, search_result.baths),
-        sqft=_pick_first_valid(details.livingArea, search_result.sqft),
-        lot_sqft=_pick_first_valid(details.lotAreaValue, search_result.lotSize),
+        beds=_pick_first_valid(details.bedrooms, search_result.bedrooms),
+        baths=_pick_first_valid(details.bathrooms, search_result.bathrooms),
+        sqft=_pick_first_valid(details.livingArea, search_result.livingArea),
+        lot_sqft=_pick_first_valid(details.lotAreaValue, search_result.lotAreaValue),
         year_built=_pick_first_valid(details.yearBuilt, search_result.yearBuilt),
-        home_type=_pick_first_valid(details.homeType, search_result.homeType),
+        home_type=_pick_first_valid(details.homeType, search_result.propertyType),
         # ARV data
         arv_estimate=arv_data["arv_estimate"],
         arv_ppsf=arv_data["arv_ppsf"],
@@ -183,7 +183,7 @@ def main():
                 # Paginate through results
                 for page in range(1, (cfg.filters.page_cap or 1) + 1):
                     search_res = client.search_properties(geo=geo, page=page, cfg=cfg)
-                    props = search_res.results or []
+                    props = search_res.props or []
                     
                     logger.info(f"Found {len(props)} properties for geo={geo} page={page}")
                     if not props:

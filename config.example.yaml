@@ -55,7 +55,7 @@ cache_config:
   # Clear only LLM cache before each run
   clear_llm_cache: false
   # Clear only API cache before each run  
-  clear_api_cache: false
+  clear_api_cache: true
   # Enable/disable LLM response caching (saves OpenAI API costs)
   llm_cache_enabled: true
   # Enable/disable Zillow API response caching (saves API calls)
