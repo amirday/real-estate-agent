@@ -105,6 +105,13 @@ class ZillowSearchParams(BaseModel):
     }
 
 
+class LlmConfig(BaseModel):
+    """Configuration for LLM/OpenAI settings."""
+    model: str = "gpt-4o-mini"  # Cheapest model that supports JSON mode
+    max_tokens: Optional[int] = None
+    temperature: float = 0.0  # Deterministic for config parsing
+
+
 class CacheConfig(BaseModel):
     """Configuration for caching behavior."""
     clear_before_run: bool = False
@@ -121,6 +128,7 @@ class AppConfig(BaseModel):
     prompt: Optional[str] = None
     zillow_api_mapping: ZillowApiMapping = Field(default_factory=ZillowApiMapping)
     cache_config: CacheConfig = Field(default_factory=CacheConfig)
+    llm_config: LlmConfig = Field(default_factory=LlmConfig)
 
 
 class PropertySummary(BaseModel):

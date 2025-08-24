@@ -6,17 +6,26 @@ from .models import AppConfig
 from .cache import get_llm_cached, set_llm_cached
 
 
-def parse_free_text_to_config(prompt: str, cache_enabled: bool = True, cache_ttl_hours: int = 24) -> Dict[str, Any]:
+def parse_free_text_to_config(prompt: str, llm_config=None, cache_enabled: bool = True, cache_ttl_hours: int = 24) -> Dict[str, Any]:
     """
     Parses the free-text 'prompt' into the strict schema using OpenAI structured output.
     If OpenAI isn't configured, returns an empty dict.
     Supports caching of LLM responses to reduce API calls and costs.
     """
     api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "gpt-4")
     if not api_key:
         # No LLM configured; skip structured parsing step gracefully.
         return {}
+    
+    # Use config model or fallback to environment/defaults
+    if llm_config:
+        model = llm_config.model
+        max_tokens = llm_config.max_tokens
+        temperature = llm_config.temperature
+    else:
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        max_tokens = None
+        temperature = 0.0
 
     # Deferred import so code runs without the package if not installed.
     try:
@@ -49,16 +58,49 @@ def parse_free_text_to_config(prompt: str, cache_enabled: bool = True, cache_ttl
 
     # Make LLM call if not cached
     client = OpenAI(api_key=api_key)
+    
+    # Determine if model supports JSON response format
+    json_models = {
+        "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-1106-preview", 
+        "gpt-4-0125-preview", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-0125"
+    }
+    supports_json_mode = any(json_model in model.lower() for json_model in json_models)
+    
     try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
+        # Build request parameters
+        request_params = {
+            "model": model,
+            "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            response_format={"type": "json_object"},
-        )
+            "temperature": temperature,
+        }
+        
+        # Add optional parameters if specified
+        if max_tokens:
+            request_params["max_tokens"] = max_tokens
+        
+        # Add JSON response format only if supported
+        if supports_json_mode:
+            request_params["response_format"] = {"type": "json_object"}
+        else:
+            # For older models, add explicit JSON instruction
+            request_params["messages"][0]["content"] += "\n\nIMPORTANT: You MUST respond with valid JSON only."
+        
+        resp = client.chat.completions.create(**request_params)
         content = resp.choices[0].message.content
+        
+        # Extract JSON if wrapped in markdown code blocks
+        if content.strip().startswith("```"):
+            # Remove markdown code block formatting
+            lines = content.strip().split('\n')
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = '\n'.join(lines)
+        
         data = json.loads(content)
         
         # Validate against our Pydantic schema and return normalized dict
@@ -71,6 +113,8 @@ def parse_free_text_to_config(prompt: str, cache_enabled: bool = True, cache_ttl
             
         return out
         
+    except json.JSONDecodeError as e:
+        raise DataValidationError(f"LLM returned invalid JSON: {e}; raw response: {locals().get('content', '')}")
     except Exception as e:
         # When LLM is configured, any failure to produce valid JSON is fatal
-        raise DataValidationError(f"LLM parsing failed: {e}; raw={locals().get('content', '')}")
+        raise DataValidationError(f"LLM parsing failed: {e}; raw response: {locals().get('content', '')}")

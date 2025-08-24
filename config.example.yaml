@@ -39,6 +39,15 @@ profit_config:
 deal_screen:
   max_list_to_arv_pct: null
 
+# LLM configuration - controls OpenAI model settings
+llm_config:
+  # OpenAI model to use (gpt-4o-mini is cheapest with JSON support)
+  model: "gpt-4o-mini"
+  # Optional: limit response length (null = no limit)
+  max_tokens: null
+  # Temperature for randomness (0.0 = deterministic, good for config parsing)
+  temperature: 0.0
+
 # Cache configuration - controls caching behavior for API calls and LLM requests
 cache_config:
   # Clear all cache before each run (useful for fresh data)

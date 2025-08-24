@@ -31,10 +31,10 @@ def load_config(path: str, logger=None) -> AppConfig:
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
-    strict = {k: v for k, v in raw.items() if k in {"filters", "arv_config", "profit_config", "deal_screen", "cache_config"}}
+    strict = {k: v for k, v in raw.items() if k in {"filters", "arv_config", "profit_config", "deal_screen", "cache_config", "llm_config"}}
     free_text = raw.get("prompt")
 
-    # Create initial config to get cache settings
+    # Create initial config to get cache and LLM settings
     initial_cfg = AppConfig(**{**strict, "filters": strict.get("filters", {})})
     
     # Handle cache clearing before run if configured
@@ -47,17 +47,16 @@ def load_config(path: str, logger=None) -> AppConfig:
 
     parsed = {}
     if free_text:
-        # Use cache configuration for LLM calls
+        # Use configuration for LLM calls
         parsed = parse_free_text_to_config(
-            free_text, 
+            free_text,
+            llm_config=initial_cfg.llm_config,
             cache_enabled=initial_cfg.cache_config.llm_cache_enabled,
             cache_ttl_hours=initial_cfg.cache_config.cache_ttl_hours
         )
         if logger:
-            if initial_cfg.cache_config.llm_cache_enabled:
-                logger.info("Parsed free-text prompt into structured config via OpenAI (cache enabled)")
-            else:
-                logger.info("Parsed free-text prompt into structured config via OpenAI (cache disabled)")
+            cache_status = "cache enabled" if initial_cfg.cache_config.llm_cache_enabled else "cache disabled"
+            logger.info(f"Parsed free-text prompt using OpenAI model '{initial_cfg.llm_config.model}' ({cache_status})")
             logger.debug(json.dumps(parsed, indent=2))
 
     merged = _merge(strict, parsed)
