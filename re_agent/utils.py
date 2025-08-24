@@ -2,12 +2,9 @@ from typing import Iterable, List, Optional
 
 
 def safe_float(x, default=None):
-    try:
-        if x is None or x == "":
-            return default
-        return float(x)
-    except Exception:
+    if x is None or x == "":
         return default
+    return float(x)
 
 
 def median(values: List[float]) -> Optional[float]:

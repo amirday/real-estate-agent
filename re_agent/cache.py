@@ -65,10 +65,7 @@ def get_cached(endpoint: str, key: str, ttl_hours: int = 24) -> Optional[Dict[st
     conn.close()
     if not row:
         return None
-    try:
-        return json.loads(row[0])
-    except Exception:
-        return None
+    return json.loads(row[0])
 
 
 def set_cached(endpoint: str, key: str, payload: Dict[str, Any]):
@@ -102,10 +99,7 @@ def get_llm_cached(prompt: str, system: str = "", ttl_hours: int = 24) -> Option
     conn.close()
     if not row:
         return None
-    try:
-        return json.loads(row[0])
-    except Exception:
-        return None
+    return json.loads(row[0])
 
 
 def set_llm_cached(prompt: str, system: str = "", response: Dict[str, Any] = None):

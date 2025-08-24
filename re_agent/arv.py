@@ -119,23 +119,19 @@ def estimate_arv_and_profit(subject: Dict, comps_payload: Dict, cfg: AppConfig) 
     bed_delta = 0.0
     bath_delta = 0.0
     
-    try:
-        s_beds = s.get("beds") or 0
-        s_baths = s.get("baths") or 0
-        
-        # Calculate mean beds/baths from filtered comps for relative comparison
-        valid_comps = [c for c in comps if c.get("price") and c.get("sqft")]  # Use same comps that passed filtering
-        comp_beds = [safe_float(c.get("bedrooms") or c.get("beds"), 0.0) for c in valid_comps]
-        comp_baths = [safe_float(c.get("bathrooms") or c.get("baths"), 0.0) for c in valid_comps]
-        
-        if comp_beds and comp_baths:
-            mean_beds = sum(comp_beds) / len(comp_beds)
-            mean_baths = sum(comp_baths) / len(comp_baths)
-            bed_delta = (s_beds - mean_beds) * adj.bed_step_pct
-            bath_delta = (s_baths - mean_baths) * adj.bath_step_pct
-    except Exception:
-        # Silently continue with zero adjustments if calculation fails
-        pass
+    s_beds = s.get("beds") or 0
+    s_baths = s.get("baths") or 0
+    
+    # Calculate mean beds/baths from filtered comps for relative comparison
+    valid_comps = [c for c in comps if c.get("price") and c.get("sqft")]  # Use same comps that passed filtering
+    comp_beds = [safe_float(c.get("bedrooms") or c.get("beds"), 0.0) for c in valid_comps]
+    comp_baths = [safe_float(c.get("bathrooms") or c.get("baths"), 0.0) for c in valid_comps]
+    
+    if comp_beds and comp_baths:
+        mean_beds = sum(comp_beds) / len(comp_beds)
+        mean_baths = sum(comp_baths) / len(comp_baths)
+        bed_delta = (s_beds - mean_beds) * adj.bed_step_pct
+        bath_delta = (s_baths - mean_baths) * adj.bath_step_pct
 
     # Apply adjustments: ARV *= (1 ± bed_step_pct × bed_delta) × (1 ± bath_step_pct × bath_delta)
     adj_multiplier = 1.0 + bed_delta + bath_delta

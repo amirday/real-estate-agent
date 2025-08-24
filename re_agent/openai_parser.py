@@ -1,7 +1,6 @@
 import os
 import json
 from typing import Any, Dict
-from .exc import DataValidationError
 from .models import AppConfig
 from .cache import get_llm_cached, set_llm_cached
 
@@ -28,10 +27,7 @@ def parse_free_text_to_config(prompt: str, llm_config=None, cache_enabled: bool 
         temperature = 0.0
 
     # Deferred import so code runs without the package if not installed.
-    try:
-        from openai import OpenAI
-    except Exception:
-        return {}
+    from openai import OpenAI
 
     # Build JSON Schema from our Pydantic model
     schema = AppConfig.model_json_schema()
@@ -66,55 +62,48 @@ def parse_free_text_to_config(prompt: str, llm_config=None, cache_enabled: bool 
     }
     supports_json_mode = any(json_model in model.lower() for json_model in json_models)
     
-    try:
-        # Build request parameters
-        request_params = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": temperature,
-        }
+    # Build request parameters
+    request_params = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": temperature,
+    }
+    
+    # Add optional parameters if specified
+    if max_tokens:
+        request_params["max_tokens"] = max_tokens
+    
+    # Add JSON response format only if supported
+    if supports_json_mode:
+        request_params["response_format"] = {"type": "json_object"}
+    else:
+        # For older models, add explicit JSON instruction
+        request_params["messages"][0]["content"] += "\n\nIMPORTANT: You MUST respond with valid JSON only."
+    
+    resp = client.chat.completions.create(**request_params)
+    content = resp.choices[0].message.content
+    
+    # Extract JSON if wrapped in markdown code blocks
+    if content.strip().startswith("```"):
+        # Remove markdown code block formatting
+        lines = content.strip().split('\n')
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines[-1].strip() == "```":
+            lines = lines[:-1]
+        content = '\n'.join(lines)
+    
+    data = json.loads(content)
+    
+    # Validate against our Pydantic schema and return normalized dict
+    llm_obj = AppConfig.model_validate(data)
+    out = llm_obj.model_dump(exclude_none=True)
+    
+    # Cache the result if enabled
+    if cache_enabled:
+        set_llm_cached(user, system, out)
         
-        # Add optional parameters if specified
-        if max_tokens:
-            request_params["max_tokens"] = max_tokens
-        
-        # Add JSON response format only if supported
-        if supports_json_mode:
-            request_params["response_format"] = {"type": "json_object"}
-        else:
-            # For older models, add explicit JSON instruction
-            request_params["messages"][0]["content"] += "\n\nIMPORTANT: You MUST respond with valid JSON only."
-        
-        resp = client.chat.completions.create(**request_params)
-        content = resp.choices[0].message.content
-        
-        # Extract JSON if wrapped in markdown code blocks
-        if content.strip().startswith("```"):
-            # Remove markdown code block formatting
-            lines = content.strip().split('\n')
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines[-1].strip() == "```":
-                lines = lines[:-1]
-            content = '\n'.join(lines)
-        
-        data = json.loads(content)
-        
-        # Validate against our Pydantic schema and return normalized dict
-        llm_obj = AppConfig.model_validate(data)
-        out = llm_obj.model_dump(exclude_none=True)
-        
-        # Cache the result if enabled
-        if cache_enabled:
-            set_llm_cached(user, system, out)
-            
-        return out
-        
-    except json.JSONDecodeError as e:
-        raise DataValidationError(f"LLM returned invalid JSON: {e}; raw response: {locals().get('content', '')}")
-    except Exception as e:
-        # When LLM is configured, any failure to produce valid JSON is fatal
-        raise DataValidationError(f"LLM parsing failed: {e}; raw response: {locals().get('content', '')}")
+    return out

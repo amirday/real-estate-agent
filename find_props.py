@@ -10,7 +10,7 @@ from re_agent.logging_util import setup_logging
 from re_agent.api import ZillowClient
 from re_agent.arv import estimate_arv_and_profit
 from re_agent.csv_out import ensure_dirs
-from re_agent.exc import RateLimitExceeded, DataValidationError, NoCompsError, MissingFieldError
+from re_agent.exc import DataValidationError
 from re_agent.models import CsvRow
 
 
@@ -74,10 +74,7 @@ def _should_filter_by_deal_screen(csv_row: CsvRow, deal_screen) -> bool:
     if csv_row.list_to_arv_pct is None:
         return False
         
-    try:
-        return float(csv_row.list_to_arv_pct) > float(deal_screen.max_list_to_arv_pct)
-    except (ValueError, TypeError):
-        return False
+    return float(csv_row.list_to_arv_pct) > float(deal_screen.max_list_to_arv_pct)
 
 
 def _process_single_property(zpid: str, search_result, client, cfg, geo: str, page: int, ts_utc: str, logger) -> CsvRow:
@@ -140,100 +137,79 @@ def main():
     ensure_dirs()
     logger = setup_logging(verbose=args.verbose)
 
-    try:
-        # Handle CLI cache clearing overrides
-        if args.clear_cache:
-            from re_agent.cache import clear_all_cache
-            logger.info("Clearing all cache via CLI argument")
-            clear_all_cache()
-            logger.debug("All cache cleared successfully")
-        elif args.clear_llm_cache:
-            from re_agent.cache import clear_llm_cache
-            logger.info("Clearing LLM cache via CLI argument")
-            clear_llm_cache()
-            logger.debug("LLM cache cleared successfully")
-        elif args.clear_api_cache:
-            from re_agent.cache import clear_api_cache
-            logger.info("Clearing API cache via CLI argument")
-            clear_api_cache()
-            logger.debug("API cache cleared successfully")
+    # Handle CLI cache clearing overrides
+    if args.clear_cache:
+        from re_agent.cache import clear_all_cache
+        logger.info("Clearing all cache via CLI argument")
+        clear_all_cache()
+        logger.debug("All cache cleared successfully")
+    elif args.clear_llm_cache:
+        from re_agent.cache import clear_llm_cache
+        logger.info("Clearing LLM cache via CLI argument")
+        clear_llm_cache()
+        logger.debug("LLM cache cleared successfully")
+    elif args.clear_api_cache:
+        from re_agent.cache import clear_api_cache
+        logger.info("Clearing API cache via CLI argument")
+        clear_api_cache()
+        logger.debug("API cache cleared successfully")
 
-        # Load and validate configuration
-        cfg = load_config(args.config, logger=logger)
-        logger.debug(f"Merged config: {cfg.model_dump_json(indent=2)}")
+    # Load and validate configuration
+    cfg = load_config(args.config, logger=logger)
+    logger.debug(f"Merged config: {cfg.model_dump_json(indent=2)}")
 
-        # Initialize Zillow API client
-        client = ZillowClient(logger=logger)
+    # Initialize Zillow API client
+    client = ZillowClient(logger=logger)
 
-        # Setup output
-        ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        out_path = args.out or os.path.join("out", f"properties_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-        fieldnames = list(CsvRow.model_fields.keys())
-        total_rows = 0
+    # Setup output
+    ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out_path = args.out or os.path.join("out", f"properties_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+    fieldnames = list(CsvRow.model_fields.keys())
+    total_rows = 0
 
-        # Process properties and write to CSV
-        with open(out_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
+    # Process properties and write to CSV
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
 
-            # Search each geographic area
-            for geo in cfg.filters.geos:
-                logger.info(f"Searching: {geo}")
+        # Search each geographic area
+        for geo in cfg.filters.geos:
+            logger.info(f"Searching: {geo}")
+            
+            # Paginate through results
+            for page in range(1, (cfg.filters.page_cap or 1) + 1):
+                search_res = client.search_properties(geo=geo, page=page, cfg=cfg)
+                props = search_res.props or []
                 
-                # Paginate through results
-                for page in range(1, (cfg.filters.page_cap or 1) + 1):
-                    search_res = client.search_properties(geo=geo, page=page, cfg=cfg)
-                    props = search_res.props or []
+                logger.info(f"Found {len(props)} properties for geo={geo} page={page}")
+                if not props:
+                    break  # Stop paginating if no results
+
+                # Process each property
+                for search_result in props:
+                    zpid = search_result.zpid
+                    if not zpid:
+                        logger.debug("Skipping result without zpid")
+                        continue
+
+                    csv_row = _process_single_property(
+                        zpid=zpid,
+                        search_result=search_result,
+                        client=client,
+                        cfg=cfg,
+                        geo=geo,
+                        page=page,
+                        ts_utc=ts_utc,
+                        logger=logger
+                    )
                     
-                    logger.info(f"Found {len(props)} properties for geo={geo} page={page}")
-                    if not props:
-                        break  # Stop paginating if no results
+                    if csv_row:  # Not filtered out
+                        writer.writerow(csv_row.model_dump())
+                        total_rows += 1
 
-                    # Process each property
-                    for search_result in props:
-                        zpid = search_result.zpid
-                        if not zpid:
-                            logger.debug("Skipping result without zpid")
-                            continue
-
-                        try:
-                            csv_row = _process_single_property(
-                                zpid=zpid,
-                                search_result=search_result,
-                                client=client,
-                                cfg=cfg,
-                                geo=geo,
-                                page=page,
-                                ts_utc=ts_utc,
-                                logger=logger
-                            )
-                            
-                            if csv_row:  # Not filtered out
-                                writer.writerow(csv_row.model_dump())
-                                total_rows += 1
-                                
-                        except Exception as e:
-                            logger.error(f"Failed to process property zpid={zpid}: {e}")
-                            raise  # Fail-fast as per agents.md
-
-        logger.info(f"Wrote {total_rows} rows → {out_path}")
-        return 0
-        
-    except Exception as e:
-        logger.error(f"Pipeline failed: {e}")
-        raise  # Fail-fast principle
+    logger.info(f"Wrote {total_rows} rows → {out_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except RateLimitExceeded as e:
-        print(str(e), file=sys.stderr)
-        sys.exit(2)
-    except (NoCompsError, MissingFieldError, DataValidationError) as e:
-        print(str(e), file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        # Fail-fast on unexpected exceptions
-        print(f"Unhandled error: {e}", file=sys.stderr)
-        sys.exit(1)
+    sys.exit(main())
