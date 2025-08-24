@@ -11,7 +11,7 @@ def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
     If OpenAI isn't configured, returns an empty dict.
     """
     api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    model = os.getenv("OPENAI_MODEL", "gpt-5")
     if not api_key:
         # No LLM configured; skip structured parsing step gracefully.
         return {}
@@ -44,7 +44,6 @@ def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
     try:
         resp = client.chat.completions.create(
             model=model,
-            temperature=0,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -57,8 +56,7 @@ def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
         llm_obj = AppConfig.model_validate(data)
         out = llm_obj.model_dump(exclude_none=True)
         # prune to allowed top-level keys just in case
-        allowed = {"filters", "arv_config", "profit_config", "deal_screen"}
-        return {k: v for k, v in out.items() if k in allowed}
+        return out
     except Exception as e:
         # When LLM is configured, any failure to produce valid JSON is fatal
         raise DataValidationError(f"LLM parsing failed: {e}; raw={locals().get('content', '')}")

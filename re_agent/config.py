@@ -2,69 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import List, Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 
-"""Config models and loader for the CLI."""
+from .models import AppConfig
 
-
-class Adjustments(BaseModel):
-    bed_step_pct: float = 0.04
-    bath_step_pct: float = 0.05
-    lot_size_cap_ratio: float = 2.0
-    age_condition_proxy: bool = False
-
-
-class Filters(BaseModel):
-    geos: List[str] = Field(default_factory=list)
-    status: List[str] = Field(default_factory=lambda: ["FOR_SALE"])
-    home_types: List[str] = Field(default_factory=lambda: ["SINGLE_FAMILY"])
-    price_min: Optional[float] = None
-    price_max: Optional[float] = None
-    beds_min: Optional[int] = None
-    baths_min: Optional[float] = None
-    min_sqft: Optional[int] = None
-    min_lot_sqft: Optional[int] = None
-    year_built_min: Optional[int] = None
-    max_dom: Optional[int] = None
-    include_pending: bool = False
-    hoa_max: Optional[float] = None
-    price_reduction_only: bool = False
-    page_cap: int = 5
-
-
-class ArvConfig(BaseModel):
-    comp_radius_mi: float = 0.75
-    comp_window_months: int = 6
-    extend_window_if_insufficient: int = 12
-    min_comps: int = 3
-    ppsf_method: str = "median"  # or "mean"
-    adjustments: Adjustments = Field(default_factory=Adjustments)
-    confidence_method: str = "n_iqr"
-
-
-class ProfitConfig(BaseModel):
-    rehab_budget: Optional[float] = None
-    closing_costs_pct: float = 0.03
-    selling_costs_pct: float = 0.06
-    misc_buffer_pct: float = 0.02
-    moe_pct_conservative: float = 0.10
-    moe_pct_optimistic: float = 0.03
-
-
-class DealScreen(BaseModel):
-    max_list_to_arv_pct: Optional[float] = None
-
-
-class AppConfig(BaseModel):
-    filters: Filters
-    arv_config: ArvConfig = Field(default_factory=ArvConfig)
-    profit_config: ProfitConfig = Field(default_factory=ProfitConfig)
-    deal_screen: Optional[DealScreen] = Field(default_factory=DealScreen)
-    prompt: Optional[str] = None
+"""Config loader for the CLI."""
 
 def _merge(strict: dict, parsed: dict) -> dict:
     # strict wins; deep merge for nested dicts

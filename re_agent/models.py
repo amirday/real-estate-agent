@@ -5,27 +5,106 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
+class Filters(BaseModel):
+    geos: List[str]
+    status: List[str] = ["FOR_SALE"]
+    home_types: List[str] = ["SINGLE_FAMILY"]
+    price_min: Optional[float] = None
+    price_max: Optional[float] = None
+    beds_min: Optional[int] = None
+    baths_min: Optional[int] = None
+    min_sqft: Optional[int] = None
+    min_lot_sqft: Optional[int] = None
+    year_built_min: Optional[int] = None
+    max_dom: Optional[int] = None
+    include_pending: bool = False
+    hoa_max: Optional[float] = None
+    price_reduction_only: bool = False
+    page_cap: int = 5
+
+
+class ArvAdjustments(BaseModel):
+    bed_step_pct: float = 0.04
+    bath_step_pct: float = 0.05
+    lot_size_cap_ratio: float = 2.0
+    age_condition_proxy: bool = False
+
+
+class ArvConfig(BaseModel):
+    comp_radius_mi: float = 0.75
+    comp_window_months: int = 6
+    extend_window_if_insufficient: int = 12
+    min_comps: int = 3
+    ppsf_method: str = "median"
+    adjustments: ArvAdjustments = Field(default_factory=ArvAdjustments)
+    confidence_method: str = "n_iqr"
+
+
+class ProfitConfig(BaseModel):
+    rehab_budget: Optional[float] = None
+    closing_costs_pct: float = 0.03
+    selling_costs_pct: float = 0.06
+    misc_buffer_pct: float = 0.02
+    moe_pct_conservative: float = 0.10
+    moe_pct_optimistic: float = 0.03
+
+
+class DealScreen(BaseModel):
+    max_list_to_arv_pct: Optional[float] = None
+
+
+class AppConfig(BaseModel):
+    filters: Filters
+    arv_config: ArvConfig = Field(default_factory=ArvConfig)
+    profit_config: ProfitConfig = Field(default_factory=ProfitConfig)
+    deal_screen: Optional[DealScreen] = None
+    prompt: Optional[str] = None
+
+
+class PropertySummary(BaseModel):
+    zpid: str
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zipcode: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    price: Optional[float] = None
+    beds: Optional[int] = None
+    baths: Optional[float] = None
+    sqft: Optional[float] = None
+    lotSize: Optional[float] = None
+    yearBuilt: Optional[int] = None
+    homeType: Optional[str] = None
+    homeStatus: Optional[str] = None
+    daysOnZillow: Optional[int] = None
+    detailUrl: Optional[str] = None
+
+    model_config = {
+        "extra": "allow",
+    }
+
+
 class PropertyDetails(BaseModel):
     zpid: str = Field(..., alias="zpid")
     address: Optional[str] = Field(default=None, alias="address")
     city: Optional[str] = Field(default=None, alias="city")
     state: Optional[str] = Field(default=None, alias="state")
-    zip: Optional[str] = Field(default=None, alias="zipcode")
+    zipcode: Optional[str] = Field(default=None, alias="zipcode")
     latitude: Optional[float] = Field(default=None, alias="latitude")
     longitude: Optional[float] = Field(default=None, alias="longitude")
     url: Optional[str] = Field(default=None, alias="url")
-    status: Optional[str] = Field(default=None, alias="homeStatus")
-    dom: Optional[int] = Field(default=None, alias="daysOnZillow")
-    hoa: Optional[float] = Field(default=None, alias="hoaFee")
-    list_price: Optional[float] = Field(default=None, alias="price")
-    beds: Optional[float] = Field(default=None, alias="bedrooms")
-    baths: Optional[float] = Field(default=None, alias="bathrooms")
-    sqft: Optional[float] = Field(default=None, alias="livingArea")
-    lot_sqft: Optional[float] = Field(default=None, alias="lotAreaValue")
-    year_built: Optional[int] = Field(default=None, alias="yearBuilt")
-    home_type: Optional[str] = Field(default=None, alias="homeType")
+    homeStatus: Optional[str] = Field(default=None, alias="homeStatus")
+    daysOnZillow: Optional[int] = Field(default=None, alias="daysOnZillow")
+    hoaFee: Optional[float] = Field(default=None, alias="hoaFee")
+    price: Optional[float] = Field(default=None, alias="price")
+    bedrooms: Optional[int] = Field(default=None, alias="bedrooms")
+    bathrooms: Optional[float] = Field(default=None, alias="bathrooms")
+    livingArea: Optional[float] = Field(default=None, alias="livingArea")
+    lotAreaValue: Optional[float] = Field(default=None, alias="lotAreaValue")
+    yearBuilt: Optional[int] = Field(default=None, alias="yearBuilt")
+    homeType: Optional[str] = Field(default=None, alias="homeType")
 
-    # Allow population by field name too to support search payloads
     model_config = {
         "populate_by_name": True,
         "extra": "allow",
@@ -35,11 +114,28 @@ class PropertyDetails(BaseModel):
 class CompRecord(BaseModel):
     price: float
     sqft: float
-    beds: Optional[float] = None
+    beds: Optional[int] = None
     baths: Optional[float] = None
     lot_sqft: Optional[float] = None
     home_type: Optional[str] = None
 
+    model_config = {
+        "extra": "allow",
+    }
+
+
+class PropertySearchResult(BaseModel):
+    results: List[PropertySummary] = []
+    totalResultCount: Optional[int] = None
+    
+    model_config = {
+        "extra": "allow",
+    }
+
+
+class CompsResult(BaseModel):
+    comps: List[CompRecord] = []
+    
     model_config = {
         "extra": "allow",
     }
@@ -53,13 +149,13 @@ class ArvComputation(BaseModel):
 
 
 class ProfitScenarios(BaseModel):
-    profit_conservative: float
-    profit_median: float
-    profit_optimistic: float
+    profit_conservative: Optional[float] = None
+    profit_median: Optional[float] = None
+    profit_optimistic: Optional[float] = None
 
 
 class CsvRow(BaseModel):
-    # Identification
+    # Identification (exact order from agents.md)
     zpid: str
     address: Optional[str] = None
     city: Optional[str] = None
@@ -73,7 +169,7 @@ class CsvRow(BaseModel):
     hoa: Optional[float] = None
     # Specs
     list_price: Optional[float] = None
-    beds: Optional[float] = None
+    beds: Optional[int] = None
     baths: Optional[float] = None
     sqft: Optional[float] = None
     lot_sqft: Optional[float] = None

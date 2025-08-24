@@ -7,7 +7,8 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .cache import cache_key_from_params, get_cached, set_cached, rate_limit_check_and_increment
-from .exc import RateLimitExceeded
+from .exc import RateLimitExceeded, DataValidationError
+from .models import PropertySearchResult, PropertyDetails, CompsResult, PropertySummary
 
 
 class ZillowClient:
@@ -58,45 +59,66 @@ class ZillowClient:
             resp.raise_for_status()
             return resp.json()
 
-    def search_properties(self, geo: str, page: int, cfg) -> Dict[str, Any]:
+    def search_properties(self, geo: str, page: int, cfg) -> PropertySearchResult:
+        """Search properties and return structured PropertySearchResult per agents.md."""
         endpoint = "propertyExtendedSearch"
         params = self._params_from_filters(geo=geo, page=page, cfg=cfg)
 
         cached = self._allowed_and_cached(endpoint, params)
         if cached is not None:
-            return cached
+            try:
+                return PropertySearchResult.model_validate(cached)
+            except Exception as e:
+                raise DataValidationError(f"Failed to validate cached search result: {e}")
 
         # Zillow RapidAPI common search endpoint
         payload = self._get("/propertyExtendedSearch", params)
         self._store_cache(endpoint, params, payload)
         self._log(f"Used endpoint: {endpoint} geo={geo} page={page}")
-        return payload
+        
+        try:
+            return PropertySearchResult.model_validate(payload)
+        except Exception as e:
+            raise DataValidationError(f"Failed to validate search result from API: {e}")
 
-    def get_property_details(self, zpid: str) -> Dict[str, Any]:
+    def get_property_details(self, zpid: str) -> PropertyDetails:
+        """Get property details and return structured PropertyDetails per agents.md."""
         endpoint = "property"
         params = {"zpid": zpid}
 
         cached = self._allowed_and_cached(endpoint, params)
         if cached is not None:
-            return cached
+            try:
+                return PropertyDetails.model_validate(cached)
+            except Exception as e:
+                raise DataValidationError(f"Failed to validate cached property details: {e}")
 
         payload = self._get("/property", params)
         # Normalize: some responses wrap details
         details = payload.get("property") or payload.get("data") or payload
         if isinstance(details, dict) and "property" in details:
             details = details["property"]
+        
         self._store_cache(endpoint, params, details)
         self._log(f"Used endpoint: {endpoint} zpid={zpid}")
-        return details
+        
+        try:
+            return PropertyDetails.model_validate(details)
+        except Exception as e:
+            raise DataValidationError(f"Failed to validate property details from API: {e}")
 
-    def get_property_comps(self, zpid: str, subject: Optional[Dict[str, Any]], cfg) -> Dict[str, Any]:
+    def get_property_comps(self, zpid: str, subject: Optional[PropertyDetails], cfg) -> CompsResult:
+        """Get property comps and return structured CompsResult per agents.md."""
         # Primary: comps endpoint
         endpoint = "comps"
         params = {"zpid": zpid, "count": 25}
 
         cached = self._allowed_and_cached(endpoint, params)
         if cached is not None:
-            return cached
+            try:
+                return CompsResult.model_validate(cached)
+            except Exception as e:
+                raise DataValidationError(f"Failed to validate cached comps result: {e}")
 
         try:
             payload = self._get("/comps", params)
@@ -111,13 +133,18 @@ class ZillowClient:
             out = {"comps": comps}
             self._store_cache(endpoint, params, out)
             self._log(f"Used endpoint: {endpoint} zpid={zpid}")
-            return out
+            
+            try:
+                return CompsResult.model_validate(out)
+            except Exception as e:
+                raise DataValidationError(f"Failed to validate comps result from API: {e}")
+                
         except Exception as e:
             self._log(f"Comps endpoint unavailable, attempting fallback: {e}")
 
-        # Fallback: recently sold near subject
-        lat = subject.get("latitude") if subject else None
-        lng = subject.get("longitude") if subject else None
+        # Fallback: recently sold near subject per agents.md fallback specification
+        lat = subject.latitude if subject and hasattr(subject, 'latitude') else None
+        lng = subject.longitude if subject and hasattr(subject, 'longitude') else None
         radius = cfg.arv_config.comp_radius_mi if cfg and cfg.arv_config else 0.75
         months = cfg.arv_config.comp_window_months if cfg and cfg.arv_config else 6
         endpoint = "propertyExtendedSearch_sold"
@@ -136,12 +163,16 @@ class ZillowClient:
 
         cached = self._allowed_and_cached(endpoint, params)
         if cached is not None:
-            return cached
+            try:
+                return CompsResult.model_validate(cached)
+            except Exception as e:
+                raise DataValidationError(f"Failed to validate cached fallback comps: {e}")
 
         payload = self._get("/propertyExtendedSearch", params)
         # normalize shape to {comps: [...]} if necessary
         comps = payload.get("results") or payload.get("props") or []
-        # If insufficient comps and allowed to extend window, try again with extended months
+        
+        # If insufficient comps and allowed to extend window per agents.md
         if cfg and cfg.arv_config and len(comps) < cfg.arv_config.min_comps:
             ext_months = cfg.arv_config.extend_window_if_insufficient
             if ext_months and ext_months > months:
@@ -156,10 +187,15 @@ class ZillowClient:
                         self._log("Extended comps window due to insufficiency")
                 except Exception as e:
                     self._log_debug(f"Extended window fetch failed: {e}")
+                    
         out = {"comps": comps}
         self._store_cache(endpoint, params, out)
         self._log("Used fallback: recently sold via propertyExtendedSearch")
-        return out
+        
+        try:
+            return CompsResult.model_validate(out)
+        except Exception as e:
+            raise DataValidationError(f"Failed to validate fallback comps result: {e}")
 
     def _params_from_filters(self, geo: str, page: int, cfg) -> Dict[str, Any]:
         f = cfg.filters
