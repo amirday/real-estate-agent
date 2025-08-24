@@ -127,8 +127,13 @@ def main():
                        help="Path to YAML config")
     parser.add_argument("--out", default=None, help="Path to output CSV")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logs")
-    parser.add_argument("--clear-cache", action="store_true", 
-                       help="Clear all cache before run (overrides config setting)")
+    cache_group = parser.add_mutually_exclusive_group()
+    cache_group.add_argument("--clear-cache", action="store_true", 
+                            help="Clear all cache before run (overrides config setting)")
+    cache_group.add_argument("--clear-llm-cache", action="store_true",
+                            help="Clear only LLM cache before run (overrides config setting)")
+    cache_group.add_argument("--clear-api-cache", action="store_true", 
+                            help="Clear only API cache before run (overrides config setting)")
     args = parser.parse_args()
 
     # Setup infrastructure
@@ -136,12 +141,22 @@ def main():
     logger = setup_logging(verbose=args.verbose)
 
     try:
-        # Handle CLI cache clearing override
+        # Handle CLI cache clearing overrides
         if args.clear_cache:
             from re_agent.cache import clear_all_cache
-            logger.info("Clearing cache via CLI argument")
+            logger.info("Clearing all cache via CLI argument")
             clear_all_cache()
-            logger.debug("Cache cleared successfully")
+            logger.debug("All cache cleared successfully")
+        elif args.clear_llm_cache:
+            from re_agent.cache import clear_llm_cache
+            logger.info("Clearing LLM cache via CLI argument")
+            clear_llm_cache()
+            logger.debug("LLM cache cleared successfully")
+        elif args.clear_api_cache:
+            from re_agent.cache import clear_api_cache
+            logger.info("Clearing API cache via CLI argument")
+            clear_api_cache()
+            logger.debug("API cache cleared successfully")
 
         # Load and validate configuration
         cfg = load_config(args.config, logger=logger)

@@ -24,7 +24,7 @@ def _merge(strict: dict, parsed: dict) -> dict:
 def load_config(path: str, logger=None) -> AppConfig:
     # Deferred import to avoid circular dependency (openai_parser imports AppConfig)
     from .openai_parser import parse_free_text_to_config
-    from .cache import clear_all_cache, get_cache_stats
+    from .cache import clear_all_cache, clear_llm_cache, clear_api_cache, get_cache_stats
     
     load_dotenv(override=False)
 
@@ -38,12 +38,29 @@ def load_config(path: str, logger=None) -> AppConfig:
     initial_cfg = AppConfig(**{**strict, "filters": strict.get("filters", {})})
     
     # Handle cache clearing before run if configured
+    cache_cleared = []
+    
     if initial_cfg.cache_config.clear_before_run:
         if logger:
-            logger.info("Clearing cache before run as configured")
+            logger.info("Clearing all cache before run as configured")
         clear_all_cache()
-        if logger:
-            logger.debug("Cache cleared successfully")
+        cache_cleared.append("all cache")
+    else:
+        # Handle granular cache clearing
+        if initial_cfg.cache_config.clear_llm_cache:
+            if logger:
+                logger.info("Clearing LLM cache before run as configured")
+            clear_llm_cache()
+            cache_cleared.append("LLM cache")
+            
+        if initial_cfg.cache_config.clear_api_cache:
+            if logger:
+                logger.info("Clearing API cache before run as configured")
+            clear_api_cache()
+            cache_cleared.append("API cache")
+    
+    if cache_cleared and logger:
+        logger.debug(f"Cache clearing completed: {', '.join(cache_cleared)}")
 
     parsed = {}
     if free_text:
