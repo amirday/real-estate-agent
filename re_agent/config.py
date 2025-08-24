@@ -8,7 +8,7 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from .openai_parser import parse_free_text_to_config
+"""Config models and loader for the CLI."""
 
 
 class Adjustments(BaseModel):
@@ -66,7 +66,6 @@ class AppConfig(BaseModel):
     deal_screen: Optional[DealScreen] = Field(default_factory=DealScreen)
     prompt: Optional[str] = None
 
-
 def _merge(strict: dict, parsed: dict) -> dict:
     # strict wins; deep merge for nested dicts
     result = dict(parsed or {})
@@ -79,6 +78,8 @@ def _merge(strict: dict, parsed: dict) -> dict:
 
 
 def load_config(path: str, logger=None) -> AppConfig:
+    # Deferred import to avoid circular dependency (openai_parser imports LLMConfig)
+    from .openai_parser import parse_free_text_to_config
     load_dotenv(override=False)
 
     with open(path, "r", encoding="utf-8") as f:

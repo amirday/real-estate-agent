@@ -5,4 +5,4 @@ python-dotenv>=1.0
 tenacity>=8.2
 PyYAML>=6.0
 openai>=1.37
-
+pytest>=8.2
