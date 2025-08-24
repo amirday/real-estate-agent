@@ -10,11 +10,13 @@ from re_agent.logging_util import setup_logging
 from re_agent.api import ZillowClient
 from re_agent.arv import estimate_arv_and_profit
 from re_agent.csv_out import ensure_dirs
+from re_agent.exc import RateLimitExceeded, DataValidationError, NoCompsError, MissingFieldError
+from re_agent.models import CsvRow
 
 
 def main():
     parser = argparse.ArgumentParser(description="Zillow ARV CLI")
-    parser.add_argument("--config", required=True, help="Path to YAML config")
+    parser.add_argument("--config", required=False, default='config.example.yaml', help="Path to YAML config")
     parser.add_argument("--out", default=None, help="Path to output CSV")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logs")
     args = parser.parse_args()
@@ -24,8 +26,11 @@ def main():
 
     try:
         cfg = load_config(args.config, logger=logger)
+    except DataValidationError as e:
+        logger.error(f"Config/LLM parsing failed: {e}")
+        sys.exit(1)
     except Exception as e:
-        print(f"Failed to load config: {e}", file=sys.stderr)
+        logger.error(f"Failed to load config: {e}")
         sys.exit(1)
 
     # Log merged config at DEBUG
@@ -50,8 +55,6 @@ def main():
         "profit_conservative", "profit_median", "profit_optimistic",
         # Ops
         "search_geo", "page", "ts_utc",
-        # Optional: reason if missing
-        "note",
     ]
 
     wrote_header = False
@@ -65,11 +68,7 @@ def main():
         for geo in cfg.filters.geos:
             logger.info(f"Searching: {geo}")
             for page in range(1, (cfg.filters.page_cap or 1) + 1):
-                try:
-                    search_res = client.search_properties(geo=geo, page=page, cfg=cfg)
-                except Exception as e:
-                    logger.error(f"Search failed for {geo} page {page}: {e}")
-                    break
+                search_res = client.search_properties(geo=geo, page=page, cfg=cfg)
 
                 props = search_res.get("results") or search_res.get("props") or []
                 logger.info(f"Found {len(props)} properties for geo={geo} page={page}")
@@ -83,45 +82,41 @@ def main():
                         logger.debug("Skipping result without zpid")
                         continue
 
-                    try:
-                        details = client.get_property_details(zpid)
-                    except Exception as e:
-                        logger.warning(f"Details failed for zpid={zpid}: {e}")
-                        details = {}
+                    details = client.get_property_details(zpid)
+                    comps_payload = client.get_property_comps(zpid=zpid, subject=details, cfg=cfg)
 
-                    try:
-                        comps_payload = client.get_property_comps(zpid=zpid, subject=details, cfg=cfg)
-                    except Exception as e:
-                        logger.warning(f"Comps failed for zpid={zpid}: {e}")
-                        comps_payload = {"comps": []}
+                    row, _ = estimate_arv_and_profit(subject=details or p, comps_payload=comps_payload, cfg=cfg)
 
-                    row, note = estimate_arv_and_profit(subject=details or p, comps_payload=comps_payload, cfg=cfg)
+                    def pick(*vals):
+                        for v in vals:
+                            if v is not None and v != "":
+                                return v
+                        return None
 
                     row.update({
                         "zpid": zpid,
-                        "address": details.get("address") or p.get("address") or "",
-                        "city": details.get("city") or p.get("city") or "",
-                        "state": details.get("state") or p.get("state") or "",
-                        "zip": details.get("zipcode") or details.get("zip") or p.get("zipcode") or p.get("zip") or "",
-                        "latitude": details.get("latitude") or p.get("latitude") or "",
-                        "longitude": details.get("longitude") or p.get("longitude") or "",
-                        "url": details.get("url") or p.get("detailUrl") or p.get("url") or "",
-                        "status": details.get("homeStatus") or p.get("status") or "",
-                        "dom": details.get("daysOnZillow") or p.get("dom") or p.get("daysOnZillow") or "",
-                        "hoa": details.get("hoaFee") or p.get("hoa") or "",
-                        "list_price": details.get("price") or p.get("price") or p.get("listPrice") or "",
-                        "beds": details.get("bedrooms") or p.get("beds") or "",
-                        "baths": details.get("bathrooms") or p.get("baths") or "",
-                        "sqft": details.get("livingArea") or p.get("sqft") or p.get("livingArea") or "",
-                        "lot_sqft": details.get("lotAreaValue") or p.get("lotSize") or p.get("lotAreaValue") or "",
-                        "year_built": details.get("yearBuilt") or p.get("yearBuilt") or "",
-                        "home_type": details.get("homeType") or p.get("homeType") or "",
+                        "address": pick(details.get("address"), p.get("address")),
+                        "city": pick(details.get("city"), p.get("city")),
+                        "state": pick(details.get("state"), p.get("state")),
+                        "zip": pick(details.get("zipcode"), details.get("zip"), p.get("zipcode"), p.get("zip")),
+                        "latitude": pick(details.get("latitude"), p.get("latitude")),
+                        "longitude": pick(details.get("longitude"), p.get("longitude")),
+                        "url": pick(details.get("url"), p.get("detailUrl"), p.get("url")),
+                        "status": pick(details.get("homeStatus"), p.get("status")),
+                        "dom": pick(details.get("daysOnZillow"), p.get("dom"), p.get("daysOnZillow")),
+                        "hoa": pick(details.get("hoaFee"), p.get("hoa")),
+                        "list_price": pick(details.get("price"), p.get("price"), p.get("listPrice")),
+                        "beds": pick(details.get("bedrooms"), p.get("beds")),
+                        "baths": pick(details.get("bathrooms"), p.get("baths")),
+                        "sqft": pick(details.get("livingArea"), p.get("sqft"), p.get("livingArea")),
+                        "lot_sqft": pick(details.get("lotAreaValue"), p.get("lotSize"), p.get("lotAreaValue")),
+                        "year_built": pick(details.get("yearBuilt"), p.get("yearBuilt")),
+                        "home_type": pick(details.get("homeType"), p.get("homeType")),
                         "comp_radius_mi": cfg.arv_config.comp_radius_mi,
                         "comp_window_months": cfg.arv_config.comp_window_months,
                         "search_geo": geo,
                         "page": page,
                         "ts_utc": ts_utc,
-                        "note": note or "",
                     })
 
                     # Deal screen filter
@@ -135,12 +130,26 @@ def main():
                             except Exception:
                                 pass
 
-                    writer.writerow(row)
+                    # Validate CSV row strictly against schema
+                    csv_model = CsvRow.model_validate(row)
+                    writer.writerow(csv_model.model_dump())
                     total_rows += 1
 
     logger.info(f"Wrote {total_rows} rows → {out_path}")
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
-
+    try:
+        sys.exit(main())
+    except RateLimitExceeded as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(2)
+    except (NoCompsError, MissingFieldError, DataValidationError) as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        # Fail-fast on unexpected exceptions
+        print(f"Unhandled error: {e}", file=sys.stderr)
+        sys.exit(1)

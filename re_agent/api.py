@@ -7,6 +7,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .cache import cache_key_from_params, get_cached, set_cached, rate_limit_check_and_increment
+from .exc import RateLimitExceeded
 
 
 class ZillowClient:
@@ -41,7 +42,7 @@ class ZillowClient:
         # Rate limit check only if we will actually hit the network
         allowed = rate_limit_check_and_increment(limit_per_day=100)
         if not allowed:
-            raise RuntimeError("Daily request limit reached (100)")
+            raise RateLimitExceeded("Daily request limit reached (100)")
         return None
 
     def _store_cache(self, endpoint: str, params: Dict[str, Any], payload: Dict[str, Any]):

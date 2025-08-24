@@ -33,7 +33,7 @@ class Filters(BaseModel):
     include_pending: bool = False
     hoa_max: Optional[float] = None
     price_reduction_only: bool = False
-    page_cap: int = 1
+    page_cap: int = 5
 
 
 class ArvConfig(BaseModel):
@@ -89,14 +89,10 @@ def load_config(path: str, logger=None) -> AppConfig:
 
     parsed = {}
     if free_text:
-        try:
-            parsed = parse_free_text_to_config(free_text)
-            if logger:
-                logger.info("Parsed free-text prompt into structured config via OpenAI")
-                logger.debug(json.dumps(parsed, indent=2))
-        except Exception as e:
-            if logger:
-                logger.warning(f"Failed to parse free-text prompt; proceeding with strict only: {e}")
+        parsed = parse_free_text_to_config(free_text)
+        if logger:
+            logger.info("Parsed free-text prompt into structured config via OpenAI")
+            logger.debug(json.dumps(parsed, indent=2))
 
     merged = _merge(strict, parsed)
 
@@ -104,4 +100,3 @@ def load_config(path: str, logger=None) -> AppConfig:
     merged.setdefault("filters", {})
     cfg = AppConfig(**merged, prompt=free_text)
     return cfg
-

@@ -1,5 +1,6 @@
 import os
 from typing import Any, Dict
+from .exc import DataValidationError
 
 
 def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
@@ -10,6 +11,7 @@ def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
     api_key = os.getenv("OPENAI_API_KEY")
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     if not api_key:
+        # No LLM configured; skip structured parsing step gracefully.
         return {}
 
     # Deferred import so code runs without the package if not installed.
@@ -62,7 +64,6 @@ def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
         # best-effort prune unknown keys
         allowed = {"filters", "arv_config", "profit_config", "deal_screen"}
         return {k: v for k, v in data.items() if k in allowed}
-    except Exception:
-        # On any error, default to no-op merge
-        return {}
-
+    except Exception as e:
+        # When LLM is configured, any failure to produce valid JSON is fatal
+        raise DataValidationError(f"LLM parsing failed: {e}; raw={locals().get('content', '')}")

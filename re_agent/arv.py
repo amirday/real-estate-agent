@@ -4,6 +4,8 @@ from typing import Dict, List, Tuple
 
 from .config import AppConfig
 from .utils import median, iqr, safe_float, clamp01
+from .exc import MissingFieldError, NoCompsError, DataValidationError
+from .models import PropertyDetails, CompRecord, ArvComputation, ProfitScenarios
 
 
 def _extract_subject_fields(subject: Dict) -> Dict:
@@ -22,11 +24,14 @@ def _filter_and_ppsf(comps: List[Dict], subject: Dict, cfg: AppConfig) -> List[f
     s = _extract_subject_fields(subject)
     s_sqft = s.get("sqft") or 0
     s_home_type = s.get("home_type")
+    s_lot = s.get("lot_sqft") or 0
+    lot_cap_ratio = cfg.arv_config.adjustments.lot_size_cap_ratio if cfg and cfg.arv_config else 2.0
 
     ppsf_vals: List[float] = []
     for c in comps:
         price = safe_float(c.get("price") or c.get("soldPrice") or c.get("sale_price"))
         sqft = safe_float(c.get("livingArea") or c.get("sqft") or c.get("living_area"))
+        lot_sqft = safe_float(c.get("lotAreaValue") or c.get("lotSize") or c.get("lot_area"))
         if not price or not sqft or sqft <= 0:
             continue
         home_type = c.get("homeType") or c.get("home_type")
@@ -36,6 +41,9 @@ def _filter_and_ppsf(comps: List[Dict], subject: Dict, cfg: AppConfig) -> List[f
         if s_sqft:
             if not (0.8 * s_sqft <= sqft <= 1.2 * s_sqft):
                 continue
+        # Ignore comps with extreme lot size compared to subject when computing ppsf
+        if s_lot and lot_sqft and lot_sqft > lot_cap_ratio * s_lot:
+            continue
         ppsf_vals.append(price / sqft)
     return ppsf_vals
 
@@ -53,43 +61,22 @@ def _confidence_from_ppsf(ppsf_vals: List[float], min_comps: int) -> float:
     return clamp01(0.5 * n_score + 0.5 * spread_score)
 
 
-def estimate_arv_and_profit(subject: Dict, comps_payload: Dict, cfg: AppConfig) -> Tuple[Dict, str]:
+def estimate_arv_and_profit(subject: Dict, comps_payload: Dict, cfg: AppConfig) -> Tuple[Dict, None]:
     row: Dict = {}
-    note = ""
     s = _extract_subject_fields(subject)
     s_sqft = s.get("sqft")
     list_price = s.get("price")
 
     if not s_sqft:
-        note = "No sqft; ARV skipped"
-        row.update({
-            "arv_estimate": "",
-            "arv_ppsf": "",
-            "comp_count": 0,
-            "arv_confidence": 0.0,
-            "list_to_arv_pct": "",
-            "profit_conservative": "",
-            "profit_median": "",
-            "profit_optimistic": "",
-        })
-        return row, note
+        raise MissingFieldError("Subject is missing sqft; cannot compute ARV")
+    if list_price is None:
+        raise MissingFieldError("Subject is missing list price; cannot compute deal ratio")
 
     comps = comps_payload.get("comps") or comps_payload.get("properties") or []
     ppsf_vals = _filter_and_ppsf(comps, subject, cfg)
 
     if not ppsf_vals:
-        note = "No valid comps"
-        row.update({
-            "arv_estimate": "",
-            "arv_ppsf": "",
-            "comp_count": 0,
-            "arv_confidence": 0.0,
-            "list_to_arv_pct": "",
-            "profit_conservative": "",
-            "profit_median": "",
-            "profit_optimistic": "",
-        })
-        return row, note
+        raise NoCompsError("No valid comps after filtering and fallback")
 
     med_ppsf = median(ppsf_vals)
     arv_base = (med_ppsf or 0.0) * s_sqft
@@ -116,12 +103,7 @@ def estimate_arv_and_profit(subject: Dict, comps_payload: Dict, cfg: AppConfig) 
 
     conf = _confidence_from_ppsf(ppsf_vals, cfg.arv_config.min_comps)
 
-    list_to_arv_pct = ""
-    if list_price and arv_estimate:
-        try:
-            list_to_arv_pct = float(list_price) / float(arv_estimate)
-        except Exception:
-            list_to_arv_pct = ""
+    list_to_arv_pct = float(list_price) / float(arv_estimate)
 
     # Profit scenarios
     profit_conservative = profit_median = profit_optimistic = ""
@@ -150,5 +132,4 @@ def estimate_arv_and_profit(subject: Dict, comps_payload: Dict, cfg: AppConfig) 
         "profit_optimistic": round(profit_optimistic, 2) if isinstance(profit_optimistic, float) else "",
     })
 
-    return row, note
-
+    return row, None
