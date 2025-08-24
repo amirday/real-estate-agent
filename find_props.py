@@ -86,7 +86,7 @@ def _process_single_property(zpid: str, search_result, client, cfg, geo: str, pa
         raise DataValidationError("Property missing zpid")
     
     # Get detailed property information
-    details = client.get_property_details(zpid)
+    details = client.get_property_details(zpid, cfg=cfg)
     if not details:
         raise DataValidationError(f"Failed to get property details for zpid={zpid}")
     

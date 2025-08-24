@@ -1,5 +1,5 @@
 filters:
-  geos: ["Dallas, TX", "75253", "Fort Worth, TX"]
+  geos: ["Dallas, TX"]
   status: ["FOR_SALE"]
   home_types: ["SINGLE_FAMILY"]
   price_min: 80000
@@ -13,7 +13,7 @@ filters:
   include_pending: false
   hoa_max: null
   price_reduction_only: false
-  page_cap: 5
+  page_cap: 1
 
 arv_config:
   comp_radius_mi: 0.75
@@ -59,8 +59,5 @@ cache_config:
   # Time-to-live for cache entries in hours
   cache_ttl_hours: 24
 
-prompt: |
-  Texas DFW single-family houses, 3+2 minimum, decent lots, DOM < 30,
-  budget 80k–400k. Use nearby sold comps within 0.75mi and 6 months;
-  extend to 12 months if fewer than 3 comps.
+prompt: ""
 

@@ -6,8 +6,8 @@ from typing import Any, Dict, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from .cache import cache_key_from_params, get_cached, set_cached, rate_limit_check_and_increment
-from .exc import RateLimitExceeded, DataValidationError
+from .cache import cache_key_from_params, get_cached, set_cached
+from .exc import DataValidationError
 from .models import PropertySearchResult, PropertyDetails, CompsResult, PropertySummary, ZillowSearchParams, ZillowApiMapping
 
 
@@ -34,12 +34,8 @@ class ZillowClient:
         if not self.key:
             raise RuntimeError("RAPIDAPI_KEY not set in environment")
 
-    def _allowed_and_cached(self, endpoint: str, params: Dict[str, Any], cache_enabled: bool = True, cache_ttl_hours: int = 24) -> Optional[Dict[str, Any]]:
+    def _get_cached(self, endpoint: str, params: Dict[str, Any], cache_enabled: bool = True, cache_ttl_hours: int = 24) -> Optional[Dict[str, Any]]:
         if not cache_enabled:
-            # Skip cache, just check rate limit
-            allowed = rate_limit_check_and_increment(limit_per_day=100)
-            if not allowed:
-                raise RateLimitExceeded("Daily request limit reached (100)")
             return None
             
         key = cache_key_from_params(params)
@@ -47,10 +43,6 @@ class ZillowClient:
         if cached is not None:
             self._log_debug(f"Cache hit: {endpoint}")
             return cached
-        # Rate limit check only if we will actually hit the network
-        allowed = rate_limit_check_and_increment(limit_per_day=100)
-        if not allowed:
-            raise RateLimitExceeded("Daily request limit reached (100)")
         return None
 
     def _store_cache(self, endpoint: str, params: Dict[str, Any], payload: Dict[str, Any]):
@@ -74,8 +66,8 @@ class ZillowClient:
         structured_params = self._params_from_filters(geo=geo, page=page, cfg=cfg)
         params_dict = self._params_to_dict(structured_params)
 
-        # Use cache configuration
-        cached = self._allowed_and_cached(
+        # Check cache first
+        cached = self._get_cached(
             endpoint, 
             params_dict,
             cache_enabled=cfg.cache_config.api_cache_enabled,
@@ -102,12 +94,21 @@ class ZillowClient:
         except Exception as e:
             raise DataValidationError(f"Failed to validate search result from API: {e}")
 
-    def get_property_details(self, zpid: str) -> PropertyDetails:
+    def get_property_details(self, zpid: str, cfg=None) -> PropertyDetails:
         """Get property details and return structured PropertyDetails per agents.md."""
         endpoint = "property"
         params = {"zpid": zpid}
 
-        cached = self._allowed_and_cached(endpoint, params)
+        # Use cache configuration if provided, otherwise use defaults
+        if cfg:
+            cached = self._get_cached(
+                endpoint, 
+                params, 
+                cache_enabled=cfg.cache_config.api_cache_enabled,
+                cache_ttl_hours=cfg.cache_config.cache_ttl_hours
+            )
+        else:
+            cached = self._get_cached(endpoint, params, cache_enabled=True, cache_ttl_hours=24)
         if cached is not None:
             try:
                 return PropertyDetails.model_validate(cached)
@@ -120,8 +121,14 @@ class ZillowClient:
         if isinstance(details, dict) and "property" in details:
             details = details["property"]
         
-        self._store_cache(endpoint, params, details)
-        self._log(f"Used endpoint: {endpoint} zpid={zpid}")
+        # Store in cache only if enabled
+        if cfg and cfg.cache_config.api_cache_enabled:
+            self._store_cache(endpoint, params, details)
+        elif not cfg:  # Default to caching if no config provided
+            self._store_cache(endpoint, params, details)
+        
+        cache_status = "cache enabled" if (cfg and cfg.cache_config.api_cache_enabled) or not cfg else "cache disabled"
+        self._log(f"Used endpoint: {endpoint} zpid={zpid} ({cache_status})")
         
         try:
             return PropertyDetails.model_validate(details)
@@ -134,7 +141,12 @@ class ZillowClient:
         endpoint = "comps"
         params = {"zpid": zpid, "count": 25}
 
-        cached = self._allowed_and_cached(endpoint, params)
+        cached = self._get_cached(
+            endpoint, 
+            params, 
+            cache_enabled=cfg.cache_config.api_cache_enabled,
+            cache_ttl_hours=cfg.cache_config.cache_ttl_hours
+        )
         if cached is not None:
             try:
                 return CompsResult.model_validate(cached)
@@ -152,8 +164,13 @@ class ZillowClient:
                 or []
             )
             out = {"comps": comps}
-            self._store_cache(endpoint, params, out)
-            self._log(f"Used endpoint: {endpoint} zpid={zpid}")
+            
+            # Store in cache only if enabled
+            if cfg.cache_config.api_cache_enabled:
+                self._store_cache(endpoint, params, out)
+            
+            cache_status = "cache enabled" if cfg.cache_config.api_cache_enabled else "cache disabled"
+            self._log(f"Used endpoint: {endpoint} zpid={zpid} ({cache_status})")
             
             try:
                 return CompsResult.model_validate(out)
@@ -182,7 +199,12 @@ class ZillowClient:
         # Clean None
         params = {k: v for k, v in params.items() if v is not None}
 
-        cached = self._allowed_and_cached(endpoint, params)
+        cached = self._get_cached(
+            endpoint, 
+            params, 
+            cache_enabled=cfg.cache_config.api_cache_enabled,
+            cache_ttl_hours=cfg.cache_config.cache_ttl_hours
+        )
         if cached is not None:
             try:
                 return CompsResult.model_validate(cached)
@@ -210,8 +232,13 @@ class ZillowClient:
                     self._log_debug(f"Extended window fetch failed: {e}")
                     
         out = {"comps": comps}
-        self._store_cache(endpoint, params, out)
-        self._log("Used fallback: recently sold via propertyExtendedSearch")
+        
+        # Store in cache only if enabled
+        if cfg.cache_config.api_cache_enabled:
+            self._store_cache(endpoint, params, out)
+        
+        cache_status = "cache enabled" if cfg.cache_config.api_cache_enabled else "cache disabled"
+        self._log(f"Used fallback: recently sold via propertyExtendedSearch ({cache_status})")
         
         try:
             return CompsResult.model_validate(out)

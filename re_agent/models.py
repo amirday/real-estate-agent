@@ -116,8 +116,8 @@ class CacheConfig(BaseModel):
     """Configuration for caching behavior."""
     clear_before_run: bool = False
     llm_cache_enabled: bool = True
-    api_cache_enabled: bool = True
-    cache_ttl_hours: int = 24  # Time-to-live for cache entries
+    api_cache_enabled: bool = False
+    cache_ttl_hours: int = 2400  # Time-to-live for cache entries
 
 
 class AppConfig(BaseModel):
