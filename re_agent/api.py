@@ -8,7 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .cache import cache_key_from_params, get_cached, set_cached, rate_limit_check_and_increment
 from .exc import RateLimitExceeded, DataValidationError
-from .models import PropertySearchResult, PropertyDetails, CompsResult, PropertySummary
+from .models import PropertySearchResult, PropertyDetails, CompsResult, PropertySummary, ZillowSearchParams, ZillowApiMapping
 
 
 class ZillowClient:
@@ -34,9 +34,16 @@ class ZillowClient:
         if not self.key:
             raise RuntimeError("RAPIDAPI_KEY not set in environment")
 
-    def _allowed_and_cached(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _allowed_and_cached(self, endpoint: str, params: Dict[str, Any], cache_enabled: bool = True, cache_ttl_hours: int = 24) -> Optional[Dict[str, Any]]:
+        if not cache_enabled:
+            # Skip cache, just check rate limit
+            allowed = rate_limit_check_and_increment(limit_per_day=100)
+            if not allowed:
+                raise RateLimitExceeded("Daily request limit reached (100)")
+            return None
+            
         key = cache_key_from_params(params)
-        cached = get_cached(endpoint, key)
+        cached = get_cached(endpoint, key, cache_ttl_hours)
         if cached is not None:
             self._log_debug(f"Cache hit: {endpoint}")
             return cached
@@ -62,9 +69,18 @@ class ZillowClient:
     def search_properties(self, geo: str, page: int, cfg) -> PropertySearchResult:
         """Search properties and return structured PropertySearchResult per agents.md."""
         endpoint = "propertyExtendedSearch"
-        params = self._params_from_filters(geo=geo, page=page, cfg=cfg)
+        
+        # Create structured parameters using Pydantic models
+        structured_params = self._params_from_filters(geo=geo, page=page, cfg=cfg)
+        params_dict = self._params_to_dict(structured_params)
 
-        cached = self._allowed_and_cached(endpoint, params)
+        # Use cache configuration
+        cached = self._allowed_and_cached(
+            endpoint, 
+            params_dict,
+            cache_enabled=cfg.cache_config.api_cache_enabled,
+            cache_ttl_hours=cfg.cache_config.cache_ttl_hours
+        )
         if cached is not None:
             try:
                 return PropertySearchResult.model_validate(cached)
@@ -72,9 +88,14 @@ class ZillowClient:
                 raise DataValidationError(f"Failed to validate cached search result: {e}")
 
         # Zillow RapidAPI common search endpoint
-        payload = self._get("/propertyExtendedSearch", params)
-        self._store_cache(endpoint, params, payload)
-        self._log(f"Used endpoint: {endpoint} geo={geo} page={page}")
+        payload = self._get("/propertyExtendedSearch", params_dict)
+        
+        # Store in cache only if enabled
+        if cfg.cache_config.api_cache_enabled:
+            self._store_cache(endpoint, params_dict, payload)
+        
+        cache_status = "cache enabled" if cfg.cache_config.api_cache_enabled else "cache disabled"
+        self._log(f"Used endpoint: {endpoint} geo={geo} page={page} ({cache_status}) params={structured_params.model_dump_json(exclude_none=True)}")
         
         try:
             return PropertySearchResult.model_validate(payload)
@@ -197,25 +218,59 @@ class ZillowClient:
         except Exception as e:
             raise DataValidationError(f"Failed to validate fallback comps result: {e}")
 
-    def _params_from_filters(self, geo: str, page: int, cfg) -> Dict[str, Any]:
+    def _params_from_filters(self, geo: str, page: int, cfg) -> ZillowSearchParams:
+        """Convert internal filters to structured Zillow API parameters using Pydantic models."""
         f = cfg.filters
-        params: Dict[str, Any] = {
+        mapping = cfg.zillow_api_mapping
+        
+        # Start with required parameters
+        param_data = {
             "location": geo,
             "page": page,
-            "status_type": ",".join(f.status) if f.status else None,
-            "home_type": ",".join(f.home_types) if f.home_types else None,
+        }
+        
+        # Map status values using configuration
+        if f.status:
+            mapped_status = [mapping.status_map.get(s, s) for s in f.status]
+            param_data["status_type"] = mapped_status[0] if len(mapped_status) == 1 else ",".join(mapped_status)
+            
+        # Map home types using configuration  
+        if f.home_types:
+            mapped_types = [mapping.home_type_map.get(t, t) for t in f.home_types]
+            param_data["home_type"] = mapped_types[0] if len(mapped_types) == 1 else ",".join(mapped_types)
+            
+        # Map filter parameters using configuration
+        filter_mapping = {
             "price_min": f.price_min,
             "price_max": f.price_max,
             "beds_min": f.beds_min,
             "baths_min": f.baths_min,
-            "sqft_min": f.min_sqft,
-            "lot_size_min": f.min_lot_sqft,
+            "min_sqft": f.min_sqft,
+            "min_lot_sqft": f.min_lot_sqft,
             "year_built_min": f.year_built_min,
-            "include_pending": f.include_pending or None,
-            "hoa_max": f.hoa_max,
-            "is_price_reduced": f.price_reduction_only or None,
-            "sort": "days" if f.max_dom else None,
+            "max_dom": f.max_dom,
+            "hoa_max": f.hoa_max
         }
-        # Remove None values
-        params = {k: v for k, v in params.items() if v is not None}
-        return params
+        
+        for internal_param, value in filter_mapping.items():
+            if value is not None:
+                api_param = mapping.param_map.get(internal_param, internal_param)
+                # Convert price values to integers
+                if "Price" in api_param and isinstance(value, float):
+                    param_data[api_param] = int(value)
+                else:
+                    param_data[api_param] = value
+        
+        # Set sort parameter if max_dom filter is specified
+        if f.max_dom:
+            param_data["sort"] = "days"
+            
+        # Validate and return structured parameters
+        try:
+            return ZillowSearchParams.model_validate(param_data)
+        except Exception as e:
+            raise DataValidationError(f"Failed to create valid Zillow API parameters: {e}")
+    
+    def _params_to_dict(self, params: ZillowSearchParams) -> Dict[str, Any]:
+        """Convert ZillowSearchParams to dict excluding None values for URL building."""
+        return {k: v for k, v in params.model_dump().items() if v is not None}

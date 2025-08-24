@@ -53,12 +53,74 @@ class DealScreen(BaseModel):
     max_list_to_arv_pct: Optional[float] = None
 
 
+class ZillowApiMapping(BaseModel):
+    """Configuration for mapping internal filter values to Zillow API parameters."""
+    status_map: dict[str, str] = Field(default_factory=lambda: {
+        "FOR_SALE": "ForSale",
+        "SOLD": "Sold", 
+        "RECENTLY_SOLD": "RecentlySold",
+        "PENDING": "Pending"
+    })
+    home_type_map: dict[str, str] = Field(default_factory=lambda: {
+        "SINGLE_FAMILY": "SingleFamily",
+        "CONDO": "Condo",
+        "TOWNHOUSE": "Townhouse",
+        "MULTI_FAMILY": "MultiFamily",
+        "LOT": "Lot",
+        "MOBILE": "Mobile",
+        "FARM": "Farm"
+    })
+    param_map: dict[str, str] = Field(default_factory=lambda: {
+        "price_min": "minPrice",
+        "price_max": "maxPrice", 
+        "beds_min": "beds",
+        "baths_min": "baths",
+        "min_sqft": "minSqft",
+        "min_lot_sqft": "minLotSize",
+        "year_built_min": "minYearBuilt",
+        "max_dom": "daysOnMarket",
+        "hoa_max": "maxHOA"
+    })
+
+
+class ZillowSearchParams(BaseModel):
+    """Pydantic model for Zillow API search parameters."""
+    location: str
+    page: int = 1
+    status_type: Optional[str] = None
+    home_type: Optional[str] = None
+    minPrice: Optional[int] = None
+    maxPrice: Optional[int] = None
+    beds: Optional[int] = None
+    baths: Optional[int] = None
+    minSqft: Optional[int] = None
+    minLotSize: Optional[int] = None
+    minYearBuilt: Optional[int] = None
+    daysOnMarket: Optional[int] = None
+    maxHOA: Optional[float] = None
+    sort: Optional[str] = None
+    
+    model_config = {
+        "extra": "forbid"  # Prevent extra parameters that might cause API errors
+    }
+
+
+class CacheConfig(BaseModel):
+    """Configuration for caching behavior."""
+    clear_before_run: bool = False
+    llm_cache_enabled: bool = True
+    api_cache_enabled: bool = True
+    cache_ttl_hours: int = 24  # Time-to-live for cache entries
+
+
 class AppConfig(BaseModel):
     filters: Filters
     arv_config: ArvConfig = Field(default_factory=ArvConfig)
     profit_config: ProfitConfig = Field(default_factory=ProfitConfig)
     deal_screen: Optional[DealScreen] = None
     prompt: Optional[str] = None
+    zillow_api_mapping: ZillowApiMapping = Field(default_factory=ZillowApiMapping)
+    cache_config: CacheConfig = Field(default_factory=CacheConfig)
 
 
 class PropertySummary(BaseModel):

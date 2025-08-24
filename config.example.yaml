@@ -39,6 +39,17 @@ profit_config:
 deal_screen:
   max_list_to_arv_pct: null
 
+# Cache configuration - controls caching behavior for API calls and LLM requests
+cache_config:
+  # Clear all cache before each run (useful for fresh data)
+  clear_before_run: false
+  # Enable/disable LLM response caching (saves OpenAI API costs)
+  llm_cache_enabled: true
+  # Enable/disable Zillow API response caching (saves API calls)
+  api_cache_enabled: true
+  # Time-to-live for cache entries in hours
+  cache_ttl_hours: 24
+
 prompt: |
   Texas DFW single-family houses, 3+2 minimum, decent lots, DOM < 30,
   budget 80k–400k. Use nearby sold comps within 0.75mi and 6 months;

@@ -2,16 +2,18 @@ import os
 import json
 from typing import Any, Dict
 from .exc import DataValidationError
-from .config import AppConfig
+from .models import AppConfig
+from .cache import get_llm_cached, set_llm_cached
 
 
-def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
+def parse_free_text_to_config(prompt: str, cache_enabled: bool = True, cache_ttl_hours: int = 24) -> Dict[str, Any]:
     """
     Parses the free-text 'prompt' into the strict schema using OpenAI structured output.
     If OpenAI isn't configured, returns an empty dict.
+    Supports caching of LLM responses to reduce API calls and costs.
     """
     api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "gpt-5")
+    model = os.getenv("OPENAI_MODEL", "gpt-4")
     if not api_key:
         # No LLM configured; skip structured parsing step gracefully.
         return {}
@@ -21,8 +23,6 @@ def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
         from openai import OpenAI
     except Exception:
         return {}
-
-    client = OpenAI(api_key=api_key)
 
     # Build JSON Schema from our Pydantic model
     schema = AppConfig.model_json_schema()
@@ -41,6 +41,14 @@ def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
         + json.dumps(schema, indent=2)
     )
 
+    # Check cache first if enabled
+    if cache_enabled:
+        cached_response = get_llm_cached(user, system, cache_ttl_hours)
+        if cached_response:
+            return cached_response
+
+    # Make LLM call if not cached
+    client = OpenAI(api_key=api_key)
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -52,11 +60,17 @@ def parse_free_text_to_config(prompt: str) -> Dict[str, Any]:
         )
         content = resp.choices[0].message.content
         data = json.loads(content)
+        
         # Validate against our Pydantic schema and return normalized dict
         llm_obj = AppConfig.model_validate(data)
         out = llm_obj.model_dump(exclude_none=True)
-        # prune to allowed top-level keys just in case
+        
+        # Cache the result if enabled
+        if cache_enabled:
+            set_llm_cached(user, system, out)
+            
         return out
+        
     except Exception as e:
         # When LLM is configured, any failure to produce valid JSON is fatal
         raise DataValidationError(f"LLM parsing failed: {e}; raw={locals().get('content', '')}")

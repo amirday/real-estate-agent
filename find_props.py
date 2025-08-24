@@ -127,6 +127,8 @@ def main():
                        help="Path to YAML config")
     parser.add_argument("--out", default=None, help="Path to output CSV")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logs")
+    parser.add_argument("--clear-cache", action="store_true", 
+                       help="Clear all cache before run (overrides config setting)")
     args = parser.parse_args()
 
     # Setup infrastructure
@@ -134,6 +136,13 @@ def main():
     logger = setup_logging(verbose=args.verbose)
 
     try:
+        # Handle CLI cache clearing override
+        if args.clear_cache:
+            from re_agent.cache import clear_all_cache
+            logger.info("Clearing cache via CLI argument")
+            clear_all_cache()
+            logger.debug("Cache cleared successfully")
+
         # Load and validate configuration
         cfg = load_config(args.config, logger=logger)
         logger.debug(f"Merged config: {cfg.model_dump_json(indent=2)}")

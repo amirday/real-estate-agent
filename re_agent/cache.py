@@ -25,6 +25,15 @@ def _connect() -> sqlite3.Connection:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS llm_cache (
+            prompt_hash TEXT PRIMARY KEY,
+            response_json TEXT,
+            ts INTEGER
+        );
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS rate_limits (
             day TEXT PRIMARY KEY,
             count INTEGER
@@ -40,10 +49,18 @@ def cache_key_from_params(params: Dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def get_cached(endpoint: str, key: str) -> Optional[Dict[str, Any]]:
+def get_cached(endpoint: str, key: str, ttl_hours: int = 24) -> Optional[Dict[str, Any]]:
+    """Get cached API response if within TTL."""
     conn = _connect()
     cur = conn.cursor()
-    cur.execute("SELECT payload_json FROM raw WHERE property_id=? AND endpoint=?", (key, endpoint))
+    
+    # Calculate cutoff timestamp for TTL
+    cutoff_ts = int(time.time()) - (ttl_hours * 3600)
+    
+    cur.execute(
+        "SELECT payload_json FROM raw WHERE property_id=? AND endpoint=? AND ts > ?", 
+        (key, endpoint, cutoff_ts)
+    )
     row = cur.fetchone()
     conn.close()
     if not row:
@@ -65,11 +82,107 @@ def set_cached(endpoint: str, key: str, payload: Dict[str, Any]):
     conn.close()
 
 
+def get_llm_cached(prompt: str, system: str = "", ttl_hours: int = 24) -> Optional[Dict[str, Any]]:
+    """Get cached LLM response if within TTL."""
+    # Create hash from prompt + system message for cache key
+    combined = f"{system}|||{prompt}"
+    prompt_hash = hashlib.sha256(combined.encode("utf-8")).hexdigest()
+    
+    conn = _connect()
+    cur = conn.cursor()
+    
+    # Calculate cutoff timestamp for TTL
+    cutoff_ts = int(time.time()) - (ttl_hours * 3600)
+    
+    cur.execute(
+        "SELECT response_json FROM llm_cache WHERE prompt_hash=? AND ts > ?", 
+        (prompt_hash, cutoff_ts)
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except Exception:
+        return None
+
+
+def set_llm_cached(prompt: str, system: str = "", response: Dict[str, Any] = None):
+    """Cache LLM response."""
+    # Create hash from prompt + system message for cache key
+    combined = f"{system}|||{prompt}"
+    prompt_hash = hashlib.sha256(combined.encode("utf-8")).hexdigest()
+    
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        "REPLACE INTO llm_cache(prompt_hash, response_json, ts) VALUES (?,?,?)",
+        (prompt_hash, json.dumps(response), int(time.time())),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_all_cache():
+    """Clear all cached data (API and LLM)."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM raw")
+    cur.execute("DELETE FROM llm_cache")
+    conn.commit()
+    conn.close()
+
+
+def clear_llm_cache():
+    """Clear only LLM cached data."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM llm_cache")
+    conn.commit()
+    conn.close()
+
+
+def clear_api_cache():
+    """Clear only API cached data."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM raw")
+    conn.commit()
+    conn.close()
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """Get cache statistics."""
+    conn = _connect()
+    cur = conn.cursor()
+    
+    # Count API cache entries
+    cur.execute("SELECT COUNT(*) FROM raw")
+    api_count = cur.fetchone()[0]
+    
+    # Count LLM cache entries
+    cur.execute("SELECT COUNT(*) FROM llm_cache")
+    llm_count = cur.fetchone()[0]
+    
+    # Get size of cache file
+    cache_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
+    
+    conn.close()
+    
+    return {
+        "api_cache_entries": api_count,
+        "llm_cache_entries": llm_count,
+        "cache_file_size_bytes": cache_size,
+        "cache_file_path": DB_PATH
+    }
+
+
 def rate_limit_check_and_increment(limit_per_day: int = 100) -> bool:
     """Returns True if allowed, False if limit exceeded. Increments if allowed."""
     import datetime as _dt
 
-    day = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+    day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     conn = _connect()
     cur = conn.cursor()
     cur.execute("SELECT count FROM rate_limits WHERE day=?", (day,))
